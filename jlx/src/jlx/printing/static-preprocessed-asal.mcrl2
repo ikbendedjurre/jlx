@@ -1,0 +1,1137 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Structure of state machines
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+sort
+	StateMachine = struct StateMachine(
+		transitions: List(Transition),
+		initialState: StateConfig,
+		states: List(StateName),
+		stateInfo: StateName -> StateInfo,
+		initialValuation: VarName -> Value
+	);
+	StateInfo = struct SimpleState(parent: StateName, entryAction: Instructions, exitAction: Instructions) ?is_simple
+		| CompositeState(parent: StateName, entryAction: Instructions, exitAction: Instructions) ?is_composite
+		| JoinVertex(parent: StateName) ?is_join
+		| JunctionVertex(parent: StateName) ?is_junction
+		| ForkVertex(parent: StateName) ?is_fork
+		| InitialState(parent: StateName) ?is_initial
+		| FinalState(parent: StateName) ?is_final
+		| ChoiceVertex(parent: StateName) ?is_choice
+		| RootVertex ?is_root;
+	Event = struct none | ChangeEvent(get_expression: Instructions) ?is_change_event | TimeoutEvent ?is_timeout;
+	Transition = struct Transition(
+		source:StateName,
+		trigger:Event,
+		guard:Instructions,
+		effect:Instructions,
+		target:StateName,
+		internal: Bool
+	);
+	% A state machine is 'in' a state configuration, which is a tree of states (including composite states and parallel regions):
+	StateConfig = struct EmptyStateConfig
+		| StateConfig(rootState:StateName, substates:List(StateConfig));
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% ASAL instructions:
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+sort
+	Instruction = struct ASALA_PushLocalVar(VarName)
+		| ASALA_SetLocalVar(VarName)
+		| ASALA_SetGlobalVar(VarName) ?is_global_var_update
+		| ASALA_Op1(ASALUnaryOp)
+		| ASALA_Op2(ASALBinaryOp)
+		| ASALA_Fct(FunctionName) ?is_function_call
+		| ASALA_Jump(Int)
+		| ASALA_JumpIfFalse(Int)
+		| ASALA_PushValue(Value)
+		| ASALA_PushGlobalVar(VarName) ?is_global_var_read
+		| ASALA_Return
+		| ASALA_Pop
+		| ASALA_ExprId(ASAL_ID)
+		| ASALA_StatId(ASAL_ID)
+		| ASALA_DefaultGuard
+	;
+	Instructions = List(Instruction);
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% ASAL operators:
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+sort
+	%Unary operators
+	ASALUnaryOp = struct ASALUnaryOp_Plus
+		| ASALUnaryOp_Minus
+		| ASALUnaryOp_Negation
+	;
+
+	%Binary operators
+	ASALBinaryOp = struct ASALBinaryOp_Add
+		| ASALBinaryOp_Subtract
+		| ASALBinaryOp_Mult
+		| ASALBinaryOp_Div
+		| ASALBinaryOp_Mod
+		| ASALBinaryOp_Eq
+		| ASALBinaryOp_Neq
+		| ASALBinaryOp_Leq
+		| ASALBinaryOp_Geq
+		| ASALBinaryOp_Less
+		| ASALBinaryOp_Greater
+		| ASALBinaryOp_And
+		| ASALBinaryOp_Or
+		| ASALBinaryOp_Xor
+	;
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% How to apply standard ASAL operators:
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+map
+	applyUnaryOp: ASALUnaryOp # Value -> Value;
+	applyBinaryOp: ASALBinaryOp # Value # Value -> Value;
+	autocastToBool: Value -> Bool;
+	autocastToVarType: CompName # VarName # Value -> Value;
+var
+	i, i1, i2: Int;
+	b, b1, b2: Bool;
+	v, v1, v2: Value;
+	cn: CompName;
+	vn: VarName;
+eqn
+	applyUnaryOp(ASALUnaryOp_Plus, STR_LITERAL(i)) = STR_LITERAL(i);
+	applyUnaryOp(ASALUnaryOp_Minus, STR_LITERAL(i)) = STR_LITERAL(-i);
+	applyUnaryOp(ASALUnaryOp_Negation, STR_TRUE) = STR_FALSE;
+	applyUnaryOp(ASALUnaryOp_Negation, STR_FALSE) = STR_TRUE;
+	applyUnaryOp(ASALUnaryOp_Negation, STR_TRUE1) = STR_FALSE1;
+	applyUnaryOp(ASALUnaryOp_Negation, STR_FALSE1) = STR_TRUE1;
+	applyBinaryOp(ASALBinaryOp_Add, STR_LITERAL(i1), STR_LITERAL(i2)) = STR_LITERAL(i1 + i2);
+	applyBinaryOp(ASALBinaryOp_Subtract, STR_LITERAL(i1), STR_LITERAL(i2)) = STR_LITERAL(i1 - i2);
+	applyBinaryOp(ASALBinaryOp_Mult, STR_LITERAL(i1), STR_LITERAL(i2)) = STR_LITERAL(i1 * i2);
+	(i1 > 0) -> applyBinaryOp(ASALBinaryOp_Mod, STR_LITERAL(i1), STR_LITERAL(i2)) = STR_LITERAL(i2 mod Int2Pos(i1));
+	applyBinaryOp(ASALBinaryOp_Eq, STR_TRUE, STR_TRUE1) = STR_TRUE;
+	applyBinaryOp(ASALBinaryOp_Eq, STR_TRUE1, STR_TRUE) = STR_TRUE;
+	applyBinaryOp(ASALBinaryOp_Eq, STR_FALSE, STR_FALSE1) = STR_TRUE;
+	applyBinaryOp(ASALBinaryOp_Eq, STR_FALSE1, STR_FALSE) = STR_TRUE;
+	applyBinaryOp(ASALBinaryOp_Eq, v1, v2) = if(v1 == v2, STR_TRUE, STR_FALSE);
+	applyBinaryOp(ASALBinaryOp_Neq, STR_TRUE, STR_TRUE1) = STR_FALSE;
+	applyBinaryOp(ASALBinaryOp_Neq, STR_TRUE1, STR_TRUE) = STR_FALSE;
+	applyBinaryOp(ASALBinaryOp_Neq, STR_FALSE, STR_FALSE1) = STR_FALSE;
+	applyBinaryOp(ASALBinaryOp_Neq, STR_FALSE1, STR_FALSE) = STR_FALSE;
+	applyBinaryOp(ASALBinaryOp_Neq, v1, v2) = if(v1 != v2, STR_TRUE, STR_FALSE);
+	applyBinaryOp(ASALBinaryOp_Leq, STR_LITERAL(i1), STR_LITERAL(i2)) = if(i1 <= i2, STR_TRUE, STR_FALSE);
+	applyBinaryOp(ASALBinaryOp_Geq, STR_LITERAL(i1), STR_LITERAL(i2)) = if(i1 >= i2, STR_TRUE, STR_FALSE);
+	applyBinaryOp(ASALBinaryOp_Less, STR_LITERAL(i1), STR_LITERAL(i2)) = if(i1 < i2, STR_TRUE, STR_FALSE);
+	applyBinaryOp(ASALBinaryOp_Greater, STR_LITERAL(i1), STR_LITERAL(i2)) = if(i1 > i2, STR_TRUE, STR_FALSE);
+	({ v1, v2 } - { STR_TRUE, STR_TRUE1 } == {}) -> applyBinaryOp(ASALBinaryOp_And, v1, v2) = STR_TRUE;
+	({ v1, v2 } - { STR_TRUE, STR_TRUE1 } != {}) -> applyBinaryOp(ASALBinaryOp_And, v1, v2) = STR_FALSE;
+	({ v1, v2 } * { STR_TRUE, STR_TRUE1 } != {}) -> applyBinaryOp(ASALBinaryOp_Or, v1, v2) = STR_TRUE;
+	({ v1, v2 } * { STR_TRUE, STR_TRUE1 } == {}) -> applyBinaryOp(ASALBinaryOp_Or, v1, v2) = STR_FALSE;
+	applyBinaryOp(ASALBinaryOp_Xor, v1, v2) = applyBinaryOp(ASALBinaryOp_And, applyBinaryOp(ASALBinaryOp_Or, v1, v2), applyBinaryOp(ASALBinaryOp_Eq, v1, v2));
+	autocastToBool(STR_TRUE) = true;
+	autocastToBool(STR_TRUE1) = true;
+	autocastToBool(STR_FALSE) = false;
+	autocastToBool(STR_FALSE1) = false;
+	autocastToVarType(cn, vn, STR_TRUE) = if(vn in pulsePorts(compDefs(cn)), STR_TRUE1, STR_TRUE);
+	autocastToVarType(cn, vn, STR_FALSE) = if(vn in pulsePorts(compDefs(cn)), STR_FALSE1, STR_FALSE);
+	autocastToVarType(cn, vn, STR_TRUE1) = if(vn in pulsePorts(compDefs(cn)), STR_TRUE1, STR_TRUE);
+	autocastToVarType(cn, vn, STR_FALSE1) = if(vn in pulsePorts(compDefs(cn)), STR_FALSE1, STR_FALSE);
+	(!(v in { STR_TRUE, STR_TRUE1, STR_FALSE, STR_FALSE1 })) -> autocastToVarType(cn, vn, v) = v;
+
+%ASAL function frame:
+sort
+	VarValuePair = struct VarValuePair(getVariable:VarName, getValue:Value);
+	ExcFrame = struct EmptyExcFrame | ExcFrame(
+		context: CompName,
+		instructions: Instructions,
+		numInstructions: Nat,
+		instructionsPos: Nat, % Index of the next-to-be-executed ASALA instruction
+		globalValuation: VarName -> Value,
+		localValuation: VarName -> Value,
+		varUpdates: List(VarValuePair),
+		stack: List(Value), % Used to do value computations
+		subFrame: ExcFrame,
+		isPaused: Bool
+	);
+
+map
+	initializeExcFrame: CompName#Instructions#(VarName -> Value) -> ExcFrame;
+	unpauseExcFrame: ExcFrame -> ExcFrame;
+	executeExcFrameCode: ExcFrame -> ExcFrame;
+	executeInstruction: ExcFrame # Instruction -> ExcFrame;
+	emptyMapping: VarName -> Value;
+	checkPredicate: CompName#Instructions#(VarName -> Value) -> Bool;
+	checkPredicate: ExcFrame -> Bool;
+
+var
+	c: Instructions;
+	cp, l: Nat;
+	diff, n: Int;
+	gvs: VarName -> Value;
+	lvs: VarName -> Value;
+	s: List(Value);
+	sf: ExcFrame;
+	zzz: Bool;
+	stackTop1: Value;
+	stackTop2: Value;
+	varName: VarName;
+	op1x: ASALUnaryOp;
+	op2x: ASALBinaryOp;
+	fctName: FunctionName;
+	v: Value;
+	paramName: VarName;
+	paramNames, l_var: List(VarName);
+	u: List(VarValuePair);
+	vv: VarValuePair;
+	comp: CompName;
+	f: ExcFrame;
+	lf: List(ExcFrame);
+	asalId: ASAL_ID;
+eqn
+	%Given a list of Instructions and a valuation of variables, construct a function frame that is ready for execution
+	initializeExcFrame(comp, c, gvs) = ExcFrame(comp, c, #c, 0, gvs, emptyMapping, [], [], EmptyExcFrame, false);
+
+	% Unpause function frames recursively.
+	% Do this immediately before resuming paused code:
+	unpauseExcFrame(EmptyExcFrame) = EmptyExcFrame;
+	unpauseExcFrame(ExcFrame(comp, c, l, cp, gvs, lvs, u, s, sf, zzz)) =
+		ExcFrame(comp, c, l, cp, gvs, lvs, [], s, unpauseExcFrame(sf), false);
+	
+	(cp < l && !zzz) -> executeExcFrameCode(ExcFrame(comp, c, l, cp, gvs, lvs, u, s, EmptyExcFrame, zzz))
+		= executeExcFrameCode(executeInstruction(ExcFrame(comp, c, l, cp, gvs, lvs, u, s, EmptyExcFrame, zzz), c . cp));
+	(cp >= l || zzz) -> executeExcFrameCode(ExcFrame(comp, c, l, cp, gvs, lvs, u, s, EmptyExcFrame, zzz))
+	 	= ExcFrame(comp, c, l, cp, gvs, lvs, u, s, EmptyExcFrame, zzz);
+	
+	% Expressions (which cannot have side-effects):
+	(s == []) -> executeInstruction(ExcFrame(comp, c, l, cp, gvs, lvs, u, s, EmptyExcFrame, zzz), ASALA_ExprId(asalId))
+		= ExcFrame(comp, c, l, cp + 1, gvs, emptyMapping, [], [evalExpr(asalId, gvs)], EmptyExcFrame, false);
+	(s != []) -> executeInstruction(ExcFrame(comp, c, l, cp, gvs, lvs, u, s, EmptyExcFrame, zzz), ASALA_ExprId(asalId))
+		= ExcFrame(comp, c, l, cp + 1, gvs, emptyMapping, [], [applyBinaryOp(ASALBinaryOp_And, rhead(s), evalExpr(asalId, gvs))], EmptyExcFrame, false);
+	(s == []) -> executeInstruction(ExcFrame(comp, c, l, cp, gvs, lvs, u, s, EmptyExcFrame, zzz), ASALA_DefaultGuard)
+		= ExcFrame(comp, c, l, cp + 1, gvs, emptyMapping, [], [STR_TRUE], EmptyExcFrame, false);
+	(s != []) -> executeInstruction(ExcFrame(comp, c, l, cp, gvs, lvs, u, s, EmptyExcFrame, zzz), ASALA_DefaultGuard)
+		= ExcFrame(comp, c, l, cp + 1, gvs, emptyMapping, [], s, EmptyExcFrame, false);
+	
+	% Statements:
+	executeInstruction(ExcFrame(comp, c, l, cp, gvs, lvs, u, [], EmptyExcFrame, zzz), ASALA_StatId(asalId))
+		= ExcFrame(comp, c, l, cp + 1, applyStat(asalId, gvs), emptyMapping, applyStat2(asalId, gvs), [], EmptyExcFrame, false);
+	
+	%To check a predicate, first initialize a function frame...
+	checkPredicate(comp, c, gvs) = checkPredicate(initializeExcFrame(comp, c, gvs));
+	%Execute the execution frame until finished...
+	(instructionsPos(f) < #instructions(f)) -> checkPredicate(f) =
+		checkPredicate(executeExcFrameCode(unpauseExcFrame(f)));
+	%Guard is true if the top of the stack contains the value true
+	(instructionsPos(f) == #instructions(f)) -> checkPredicate(f) =
+		#stack(f) > 0 => head(stack(f)) == STR_TRUE;
+
+map
+	addIfNotUnreferenced: (VarName -> Value) # CompName # VarName # Value -> (VarName -> Value);
+	addIfChangedOnly: List(VarValuePair) # CompName # VarName # Value # (VarName -> Value) -> List(VarValuePair);
+var
+	gvs: VarName -> Value;
+	comp: CompName;
+	varName: VarName;
+	v: Value;
+	vvps: List(VarValuePair);
+eqn
+	addIfNotUnreferenced(gvs, comp, varName, v)
+		= if(varName in pulsePorts(compDefs(comp)) || (varName in unreferencedVars(comp) && SELECTIVE_MEMORY_VARIABLES), gvs, gvs[varName -> v]);
+	addIfChangedOnly(vvps, comp, varName, v, gvs)
+		= if(v == gvs(varName), vvps, vvps <| VarValuePair(varName, v));
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Basic operations states and state configurations
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+map
+	filterStateList: List(StateName)#(StateName -> Bool) -> List(StateName);
+	getForks: StateMachine -> List(StateName);
+	getJoins: StateMachine -> List(StateName);
+	getJunctions: StateMachine -> List(StateName);
+	getInitialStates: StateMachine -> List(StateName);
+	getFinalStates: StateMachine -> List(StateName);
+	getEntryActionState: StateMachine#StateName -> Instructions;
+	getExitActionState: StateMachine#StateName -> Instructions;
+	getAllStatesConfig: StateConfig -> Set(StateName);
+	getAllStatesConfigList: List(StateConfig) -> Set(StateName);
+	containsPseudoState: StateConfig#StateMachine -> Bool;
+	maxDepth: StateConfig -> Int;
+	maxDepthList: List(StateConfig) -> Int;
+var
+	s: StateName;
+	ls: List(StateName);
+	sc_list: List(StateConfig);
+	sc, sc2: StateConfig;
+	sm: StateMachine;
+	filter: StateName -> Bool;
+eqn
+	filterStateList([], filter) = [];
+	filterStateList(s |> ls, filter) = if(filter(s), [s], []) ++ filterStateList(ls, filter);
+	getForks(sm) = filterStateList(states(sm), lambda x:StateName. is_fork(stateInfo(sm)(x)));
+	getJunctions(sm) = filterStateList(states(sm), lambda x:StateName. is_junction(stateInfo(sm)(x)));
+	getJoins(sm) = filterStateList(states(sm), lambda x:StateName. is_join(stateInfo(sm)(x)));
+	getInitialStates(sm) = filterStateList(states(sm), lambda x:StateName. is_initial(stateInfo(sm)(x)));
+	getFinalStates(sm) = filterStateList(states(sm), lambda x:StateName. is_final(stateInfo(sm)(x)));
+	getEntryActionState(sm, s) = if(is_simple(stateInfo(sm)(s)) || is_composite(stateInfo(sm)(s)),
+		entryAction(stateInfo(sm)(s)),
+		[]);
+	getExitActionState(sm, s) = if(is_simple(stateInfo(sm)(s)) || is_composite(stateInfo(sm)(s)),
+		exitAction(stateInfo(sm)(s)),
+		[]);
+	getAllStatesConfig(StateConfig(s, sc_list)) = {s} + getAllStatesConfigList(sc_list);
+	getAllStatesConfigList([]) = {};
+	getAllStatesConfigList(sc |> sc_list) = getAllStatesConfig(sc) + getAllStatesConfigList(sc_list);
+	containsPseudoState(sc,sm)  = exists v:StateName. v in getAllStatesConfig(sc) && (is_choice(stateInfo(sm)(v)) || is_join(stateInfo(sm)(v)) || is_fork(stateInfo(sm)(v))
+		|| is_junction(stateInfo(sm)(v)) || is_initial(stateInfo(sm)(v)));
+
+	%Computes the maximum depth from the root to the leafs.
+	maxDepth(sc) = 1 + maxDepthList(substates(sc));
+	maxDepthList([]) = 0;
+	maxDepthList(sc |> sc_list) = max(maxDepth(sc),maxDepthList(sc_list));
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Transformation from transitions to steps
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+sort
+	Step = struct Step(
+		source: StateConfig,
+		trigger: Event,
+		guard: List(Instructions),
+		effect: ComposedBehavior,
+		target: StateConfig,
+		internal: Bool,
+		arrowEnd: StateName
+	);
+map
+	Steps: StateMachine -> List(Step);
+	convertTransitionToStep: List(Transition)#StateMachine -> List(Step);
+	addAncestors: StateConfig#StateMachine -> StateConfig;
+	getIncomingSteps: List(Step)#StateName -> List(Step); %Only works for non-composite states (otherwise it could be a Step within a composite state)
+	getOutgoingSteps: List(Step)#StateName -> List(Step); %Only works for non-composite states (otherwise it could be a Step within a composite state)
+	getSourceConfigs: List(Step) -> List(StateConfig);
+	getTargetConfigs: List(Step) -> List(StateConfig);
+	combineStateConfigs: List(StateConfig) -> StateConfig;
+	goOneDeeperStateConfigList: List(StateConfig) -> List(StateConfig);
+	replaceStateWithStateConfig: StateConfig#StateName#StateConfig -> StateConfig;
+	replaceStateWithStateConfigList: List(StateConfig)#StateName#StateConfig -> List(StateConfig);
+	combineGuards: List(Step) -> List(Instructions);
+	combineEffectsList: List(Step) -> List(ComposedBehavior);
+	removeSteps: List(Step)#List(Step) -> List(Step);
+	removeJoins: List(StateName)#List(Step) -> List(Step);
+	removeForks: List(StateName)#List(Step) -> List(Step);
+	updateGuard: Step#List(Instructions) -> Step;
+	processInitialStatesSteps: StateMachine#List(Step) -> List(Step);
+	processInitialStatesTarget: StateConfig#StateMachine -> StateConfig;
+	processInitialStatesTargetList: List(StateConfig)#StateMachine -> List(StateConfig);
+	addFinalStatesSteps: StateMachine#List(Step) -> List(Step);
+	addFinalStatesSource: StateConfig#StateMachine -> StateConfig;
+	addFinalStatesSourceList: List(StateConfig)#StateMachine -> List(StateConfig);
+	getInitialStates: StateName#List(StateName)#StateMachine -> List(StateConfig);
+	getFinalStates: StateName#List(StateName)#StateMachine -> List(StateConfig);
+	removeJunctions: List(StateName)#List(Step) -> List(Step);
+	computeStepsReplacingJunction: List(Step)#List(Step)#List(Step) -> List(Step);
+var
+	p:Transition;
+	plist: List(Transition);
+	tlist, tfilter,t_incoming,t_outgoing,t_iter: List(Step);
+	sc,replacement: StateConfig;
+	s,s2:StateName;
+	slist:List(StateName);
+	sclist: List(StateConfig);
+	sc1, sc2: StateConfig;
+	sm: StateMachine;
+	g: List(Instructions);
+	t,t2:Step;
+eqn
+	convertTransitionToStep([],sm) = [];
+	convertTransitionToStep(p |> plist,sm) =
+		[Step(
+			addAncestors(StateConfig(source(p),[]),sm),
+			if(is_timeout(trigger(p)), TimeoutEvent, trigger(p)) ,
+			[guard(p)],
+			InstructionsToComposedBehavior(effect(p)),
+			addAncestors(StateConfig(target(p),[]),sm),
+			internal(p),
+			target(p))]
+		++ convertTransitionToStep(plist,sm);
+	addAncestors(sc,sm) =
+		if(parent(stateInfo(sm)(rootState(sc))) == root,
+			sc,
+			addAncestors(
+				StateConfig(parent(stateInfo(sm)(rootState(sc))),[sc]),
+				sm));
+	getIncomingSteps([], s) = [];
+	getIncomingSteps(t |> tlist, s) =
+		if(s in getAllStatesConfig(target(t)),
+			[t],
+			[])
+		++ getIncomingSteps(tlist, s);
+	getOutgoingSteps([], s) = [];
+	getOutgoingSteps(t |> tlist, s) =
+		if(s in getAllStatesConfig(source(t)),
+			[t],
+			[])
+		++ getOutgoingSteps(tlist, s);
+	getSourceConfigs([]) = [];
+	getSourceConfigs(t |> tlist) = source(t) |> getSourceConfigs(tlist);
+	getTargetConfigs([]) = [];
+	getTargetConfigs(t |> tlist) = target(t) |> getTargetConfigs(tlist);
+	replaceStateWithStateConfig(sc,s,replacement) =
+		if(rootState(sc) == s,
+			replacement,
+			StateConfig(
+				rootState(sc),
+				replaceStateWithStateConfigList(substates(sc),s,replacement)));
+	replaceStateWithStateConfigList([],s,replacement) = [];
+	replaceStateWithStateConfigList(sc |> sclist, s, replacement) =
+		replaceStateWithStateConfig(sc,s,replacement)
+		|> replaceStateWithStateConfigList(sclist,s,replacement);
+	combineStateConfigs(sc1 |> sc2 |> sclist) =
+		if(rootState(sc1) == rootState(sc2)
+				&& ((getAllStatesConfigList(substates(sc1)) - getAllStatesConfigList(substates(sc2))) == getAllStatesConfigList(substates(sc1))),
+			StateConfig(
+				rootState(sc1),
+				goOneDeeperStateConfigList(sc1 |> sc2 |> sclist)),
+			StateConfig(
+				rootState(sc1),
+				[combineStateConfigs(goOneDeeperStateConfigList(sc1 |> sc2 |> sclist))]));
+	goOneDeeperStateConfigList([]) = [];
+	goOneDeeperStateConfigList(sc |> sclist) = substates(sc) ++ goOneDeeperStateConfigList(sclist);
+	removeSteps([],tfilter) = [];
+	removeSteps(t |> tlist, tfilter) =
+		if(t in tfilter,
+			[],
+			[t])
+		++ removeSteps(tlist,tfilter);
+	combineGuards([]) = [];
+	combineGuards(t |> tlist) = guard(t) ++ combineGuards(tlist);
+	combineEffectsList([]) = [];
+	combineEffectsList(t |> tlist) = effect(t) |> combineEffectsList(tlist);
+	removeJoins([], tlist) = tlist;
+	removeJoins(s |> slist, tlist) =
+		removeJoins(slist,
+			removeSteps(tlist, incoming ++ outgoing) <| Step(
+				combineStateConfigs(getSourceConfigs(incoming)),
+				none,
+				combineGuards(incoming ++ outgoing),
+				[ParBehaviors(combineEffectsList(incoming))],
+				target(head(incoming)),
+				false,
+				root))
+			<| updateGuard(head(outgoing),[])
+			whr incoming = getIncomingSteps(tlist,s), outgoing = getOutgoingSteps(tlist,s) end;
+	removeForks([],tlist) = tlist;
+	removeForks(s |> slist,tlist) =
+		removeForks(slist,
+			removeSteps(tlist, incoming ++ outgoing) <| Step(
+				source(head(outgoing)),
+				none,
+				[],
+				[ParBehaviors(combineEffectsList(outgoing))],
+				combineStateConfigs(getTargetConfigs(outgoing)),
+				false,
+				root))
+			<| updateGuard(head(incoming),combineGuards(incoming ++ outgoing))
+			whr incoming = getIncomingSteps(tlist,s), outgoing = getOutgoingSteps(tlist,s) end;
+	updateGuard(t,g) = Step(
+		source(t),
+		trigger(t),
+		g,
+		effect(t),
+		target(t),
+		internal(t),
+		arrowEnd(t));
+	processInitialStatesSteps(sm,[]) = [];
+	processInitialStatesSteps(sm,t |> tlist) =
+		Step(
+			source(t),
+			trigger(t),
+			guard(t),
+			effect(t),
+			processInitialStatesTarget(target(t),sm),
+			internal(t),
+			arrowEnd(t))
+		|> processInitialStatesSteps(sm,tlist);
+	addFinalStatesSteps(sm,[]) = [];
+	addFinalStatesSteps(sm,t |> tlist) =
+		if(trigger(t) == none,
+			[t],
+			[Step(
+				if(trigger(t) == none,
+					addFinalStatesSource(source(t),sm),
+					source(t)),
+				trigger(t),
+				guard(t),
+				effect(t),
+				target(t),
+				internal(t),
+				arrowEnd(t))])
+		++ addFinalStatesSteps(sm,tlist);
+	processInitialStatesTarget(sc,sm) =
+		if(is_composite(stateInfo(sm)(rootState(sc))) && #substates(sc) == 0,
+			StateConfig(rootState(sc), getInitialStates(rootState(sc),getInitialStates(sm),sm)),
+			StateConfig(rootState(sc), processInitialStatesTargetList(substates(sc),sm)));
+	processInitialStatesTargetList([],sm) = [];
+	processInitialStatesTargetList(sc |> sclist,sm) =
+		processInitialStatesTarget(sc,sm) |> processInitialStatesTargetList(sclist,sm);
+	addFinalStatesSource(sc,sm) =
+		if(is_composite(stateInfo(sm)(rootState(sc))) && #substates(sc) == 0,
+			StateConfig(rootState(sc), getFinalStates(rootState(sc),getFinalStates(sm),sm)),
+			StateConfig(rootState(sc), addFinalStatesSourceList(substates(sc),sm)));
+	addFinalStatesSourceList([],sm) = [];
+	addFinalStatesSourceList(sc |> sclist,sm) = addFinalStatesSource(sc,sm) |> addFinalStatesSourceList(sclist,sm);
+	getInitialStates(s, s2 |> slist,sm) = if(parent(stateInfo(sm)(s2)) == s, [StateConfig(s2,[])], []) ++ getInitialStates(s,slist,sm);
+	getInitialStates(s, [], sm) = [];
+	getFinalStates(s, s2 |> slist,sm) = if(parent(stateInfo(sm)(s2)) == s, [StateConfig(s2,[])], []) ++ getFinalStates(s,slist,sm);
+	getFinalStates(s, [], sm) = [];
+	Steps(sm) =
+		addFinalStatesSteps(sm,
+			processInitialStatesSteps(sm,
+				removeForks(getForks(sm),
+					removeJoins(getJoins(sm),
+						removeJunctions(getJunctions(sm),
+							convertTransitionToStep(transitions(sm),sm))))));
+	removeJunctions([],tlist) = tlist;
+	removeJunctions(s |> slist, tlist) =
+		removeJunctions(slist,
+			removeSteps(tlist,getIncomingSteps(tlist,s) ++ getOutgoingSteps(tlist,s))
+				++ computeStepsReplacingJunction(
+					getIncomingSteps(tlist,s),
+					getOutgoingSteps(tlist,s),
+					getOutgoingSteps(tlist,s)));
+	computeStepsReplacingJunction([],t_outgoing,t_iter) = [];
+	computeStepsReplacingJunction(t |> t_incoming,t_outgoing,[]) =
+		computeStepsReplacingJunction(t_incoming,t_outgoing,t_outgoing);
+	computeStepsReplacingJunction(t |> t_incoming, t_outgoing,t2 |> t_iter) =
+		[Step(
+			source(t),
+			trigger(t),
+			guard(t) ++ guard(t2),
+			effect(t) ++ effect(t2),
+			target(t2),
+			false,
+			arrowEnd(t2))]
+		++ computeStepsReplacingJunction(t |> t_incoming,t_outgoing,t_iter);
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Step selection
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Determine which Steps are possible/enabled/survive priority:
+% Possible: filter Steps to Steps that are possible from current state configuration
+% Enabled: filter Steps to Steps where the guard is true and event matches
+% Priority: more deeply nested Steps have priority over others, filter Steps to the ones with the highest priority
+map
+	matchState:StateConfig#StateConfig -> Bool;
+	filterPossible: List(Step)#StateConfig#StateMachine -> List(Step);
+	filterEnabled: List(Step)#Event#(VarName -> Value)#CompName -> List(Step);
+	filterEnabledEventList: List(Event)#List(Step)#StateConfig#StateMachine#(VarName -> Value)#CompName -> List(Step);
+	filterPriority: List(Step) -> List(Step);
+	filterPriority: List(Step)#List(Step) -> List(Step);
+	StepHasPriorityOver: Step#Step -> Bool;
+var
+	sc,sc2: StateConfig;
+	tr,tr1,tr2: Step;
+	trs, trs_to_process, all_trs, steps: List(Step);
+	e:Event;
+	e_list: List(Event);
+	vars:VarName -> Value;
+	sm: StateMachine;
+	comp: CompName;
+eqn
+	%When sc is the current state config and sc2 the source of a Step then the Step is
+	%enabled when sc2 is contained in sc. sc may containt additional children states or parallel regions.
+	matchState(sc,sc2) = (getAllStatesConfig(sc2) - getAllStatesConfig(sc)) == {};
+	filterPossible([], sc, sm) = [];
+	filterPossible(tr |> trs, sc, sm) = filterPossible(trs,sc,sm)
+		%matchState checks whether we are in a state config that allows the Step.
+		%If the current state configuration contains a pseudo state then we will only allow Steps
+		%that include pseudo states in the source (we are busy with a more complex Step)
+		++ if(matchState(sc,source(tr)) && (containsPseudoState(sc,sm) => containsPseudoState(source(tr),sm)),
+			[tr],
+			[]);
+	filterEnabled([],e,vars,comp) = [];
+	filterEnabled(tr |> trs,e,vars,comp) =
+		%to check the guard we create a function frame and execute it after which we inspect the frame stack for the result
+		if(trigger(tr) == e && forall g:Instructions. g in guard(tr) => checkPredicate(comp,g,vars),[tr],[])
+		++ filterEnabled(trs,e,vars,comp);
+	filterEnabledEventList(e |> e_list, steps, sc, sm, vars, comp) = filterEnabled(filterPossible(steps,sc,sm),e,vars,comp)
+		++ filterEnabledEventList(e_list, steps, sc, sm, vars, comp);
+	filterEnabledEventList([], steps, sc, sm, vars, comp) = [];
+
+	%Steps stemming from states deeper in the hierarchy have priority.
+	filterPriority(trs) = filterPriority(trs,trs);
+	filterPriority(tr |> trs_to_process,all_trs) =
+		if(forall t':Step. t' in all_trs => !StepHasPriorityOver(t',tr) || t' == tr,
+			[tr],
+			[])
+		++ filterPriority(trs_to_process,all_trs);
+	filterPriority([],all_trs) = [];
+	StepHasPriorityOver(tr1,tr2) =
+		getAllStatesConfig(source(tr2)) - getAllStatesConfig(source(tr1)) == {}
+		&& getAllStatesConfig(source(tr1)) - getAllStatesConfig(source(tr2)) != {}
+		&& maxDepth(source(tr1)) > maxDepth(source(tr2));
+
+% SMs can make multi-Steps, execute several Steps from parallel regions in one run to completion
+% Here we compute, given a set of Steps, all possible combinations thate are conflict free.
+% Conflict free means that no two Steps exit the same state.
+map
+	multistepPossibilities: List(Step) -> List(List(Step));
+	multistepPossibilities: List(Step)#List(Step)#List(Step)#Bool -> List(List(Step));
+	computeIfConflict: Step#Step -> Bool;
+	List2FSet: List(Step) -> FSet(Step);
+var
+	trs,trs1,trs2,trs_to_process,all_trs,candidates,selected: List(Step);
+	tr,tr1,tr2: Step;
+	added: Bool;
+eqn
+	multistepPossibilities([]) = [];
+	multistepPossibilities(tr |> trs) = multistepPossibilities(tr|> trs,tr|> trs,[],false);
+	(forall t:Step. t in selected => !computeIfConflict(tr,t)) -> multistepPossibilities(tr |> trs,all_trs,selected,added) =
+		multistepPossibilities(all_trs,all_trs,selected <| tr,false) ++ multistepPossibilities(trs,all_trs,selected,true);
+	(exists t:Step. t in selected && computeIfConflict(tr,t)) -> multistepPossibilities(tr |> trs,all_trs,selected,added) =
+		multistepPossibilities(trs,all_trs,selected,added);
+	multistepPossibilities([],all_trs,selected,added) = if(added,[],[selected]);
+	computeIfConflict(tr1,tr2) =
+		(getAllStatesConfig(source(tr2)) - getExitedStates(source(tr1),target(tr1),tr1) != getAllStatesConfig(source(tr2)))
+		|| (getAllStatesConfig(source(tr1)) - getExitedStates(source(tr2),target(tr2),tr2) != getAllStatesConfig(source(tr1)))
+		|| !(is_change_event(trigger(tr1)) && trigger(tr1) == trigger(tr2));
+	List2FSet([]) = {};
+	List2FSet(tr |> trs) = {tr} + List2FSet(trs);
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Next state computation
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+map
+	computeNextState: StateConfig#Step -> StateConfig;
+	computeNextState: StateConfig#StateConfig#StateConfig#Set(StateName) -> StateConfig;
+	computeNextStateSubstates: StateConfig#StateConfig#List(StateConfig)#Set(StateName) -> List(StateConfig);
+	findSubstates: StateName#List(StateConfig) -> List(StateConfig);
+	findUnaffectedRegions: List(StateConfig)#List(StateConfig)#Set(StateName) -> List(StateConfig);
+var
+	s1, target_state: StateName;
+	sc1,sc2,cur,source_sc,target_sc:StateConfig;
+	tr: Step;
+	sclist, sclist1, sclist2, source_substate_list, target_substate_list, cur_substate_list: List(StateConfig);
+	ordering: List(StateName);
+	exited: Set(StateName);
+eqn
+	computeNextState(cur,tr) = computeNextState(
+		cur,
+		source(tr),
+		target(tr),
+		%if the Step is a selfloop, compute exited states
+		if(arrowEnd(tr) in getAllStatesConfig(source(tr)),
+			getAllStatesConfigList(findSubstates(arrowEnd(tr),[cur])),
+			{}));
+	%The basis of the next state is the target state configuration.
+	%We add parallel regions that are not directly present in the target state configuration.
+	computeNextState(cur,source_sc,target_sc,exited) =
+		StateConfig(
+			rootState(target_sc),
+			computeNextStateSubstates(cur,source_sc,substates(target_sc),exited)
+				++ if(#findSubstates(rootState(target_sc),[source_sc]) > 0,
+					findUnaffectedRegions(
+						findSubstates(rootState(target_sc),[source_sc]),
+						findSubstates(rootState(target_sc),[cur]),
+						exited),
+					[])
+		);
+
+	%Recurse on all substates
+	computeNextStateSubstates(cur,source_sc,sc1 |> target_substate_list,exited) =
+		[computeNextState(cur,source_sc,sc1,exited)]
+		++ computeNextStateSubstates(cur,source_sc,target_substate_list,exited);
+	computeNextStateSubstates(cur,source_sc,[],exited) = [];
+
+	%Search through state configuration for target_state, return all its substates.
+	findSubstates(target_state,sc1 |> sclist) =
+		if(rootState(sc1) == target_state,
+			substates(sc1), %Found target_state, return its children
+			%Not found. By adding substates to sclist we keep recursively searching downwards.
+			findSubstates(target_state,sclist ++ substates(sc1)));
+	findSubstates(target_state,[]) = [];
+
+	%Find parallel regions that were not affected by a Steps
+	%sc1 is an unaffected region of the current state config if it not part of the source state config
+	%of the Step and it is not exited in a selfloop.
+	findUnaffectedRegions(source_substate_list,sc1 |> cur_substate_list,exited) =
+		if(rootState(sc1) in getAllStatesConfigList(source_substate_list) || rootState(sc1) in exited,
+			[],
+			[sc1])
+		++ findUnaffectedRegions(source_substate_list,cur_substate_list,exited);
+	findUnaffectedRegions(source_substate_list,[],exited) = [];
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Behaviour selection
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+map
+	getExitedStates: StateConfig#StateConfig#Step -> Set(StateName);
+	getEnteredStates: StateConfig#StateConfig#Step -> Set(StateName);
+	determineBehaviourStep: StateMachine#Step#StateConfig -> ComposedBehavior;
+	getEntryActions: StateMachine#StateConfig#Step -> ComposedBehavior;
+	getExitActions: StateMachine#StateConfig#Step -> ComposedBehavior;
+	determineOrderEntryBehavior: StateMachine#List(StateConfig)#Set(StateName)#List(StateConfig)#List(ComposedBehavior) -> ComposedBehavior;
+	determineOrderExitBehavior: StateMachine#List(StateConfig)#Set(StateName)#List(StateConfig)#List(ComposedBehavior) -> ComposedBehavior;
+	InstructionsToComposedBehavior: Instructions -> ComposedBehavior;
+var
+	sm: StateMachine;
+	sc1,sc2,cur,target_sc: StateConfig;
+	tr: Step;
+	cur_level,next_level: List(StateConfig);
+	entry_set,exit_set: Set(StateName);
+	behavior_set: List(ComposedBehavior);
+	par_comp,cb: List(ComposedBehavior);
+	i: Instruction;
+	instr: Instructions;
+eqn
+	%Computes the entered/exited states from a Step. sc is the state config before the Step
+	%sc2 is the state config after the Step. In general the change in state config shows which
+	%states are entered and exited. However, in the case of a self loop states may be entered and getExitedStates
+	%without changing the state config. We detect that case by looking at which state the arrow points.
+	getExitedStates(sc1,sc2,tr) = getAllStatesConfig(sc1) - getAllStatesConfig(sc2)
+		+ if(arrowEnd(tr) in getAllStatesConfig(sc1),
+				{arrowEnd(tr)} + getAllStatesConfigList(findSubstates(arrowEnd(tr),[sc1])),
+				{});
+	getEnteredStates(sc1,sc2,tr) = getAllStatesConfig(sc2) - getAllStatesConfig(sc1)
+		+ if(arrowEnd(tr) in getAllStatesConfig(sc1),
+				{arrowEnd(tr)} + getAllStatesConfigList(findSubstates(arrowEnd(tr),[sc2])),
+				{});
+
+	%For non internal Steps we first perform exit actions, then the effect of the Step and finally entry actions.
+	%removeEmptyPar removes branches of parallel behavior that do not have any behavior.
+	%getEntryActions and getExitActions may deliver such empty branches.
+	(!internal(tr)) -> determineBehaviourStep(sm,tr,cur) =
+		removeEmptyPar(getExitActions(sm,cur,tr)
+		++ effect(tr)
+		++ getEntryActions(sm,cur,tr));
+	%If it is an internal Step we do not perform entry and exit actions.
+	internal(tr) -> determineBehaviourStep(sm,tr,cur) = removeEmptyPar(effect(tr));
+
+	InstructionsToComposedBehavior([]) = [];
+	InstructionsToComposedBehavior(i |> instr) = Instruction(i) |> InstructionsToComposedBehavior(instr);
+
+	%determineOrderEntryBehavior actually computes in what order what entry actions must be performed.
+	getEntryActions(sm,cur,tr) =
+		determineOrderEntryBehavior(
+			sm,
+			[computeNextState(cur,tr)],
+			getEnteredStates(cur,computeNextState(cur,tr),tr),
+			[],
+			[]);
+	%Entry behavior is performed outside in, first the entry behavior of the top level states are performed.
+	%If there are still states to be evaluated at the current level of the hierarchy we apply this rule.
+	determineOrderEntryBehavior(sm,sc1 |> cur_level,entry_set,next_level,behavior_set) =
+		determineOrderEntryBehavior(
+			sm,
+			cur_level,
+			entry_set,
+			next_level ++ substates(sc1), %Add substates to next_level which will be dealt with later
+			%If the state under configuration is actually entered we add its entry action behavior to behavior_set.
+			%behavior_set contains all the parallel entry actions of the current level.
+			behavior_set ++ if(rootState(sc1) in entry_set, [InstructionsToComposedBehavior(getEntryActionState(sm,rootState(sc1)))],[]));
+	%If the current level is finished and there is still a next level to evaluate we apply this rule.
+	determineOrderEntryBehavior(sm,[],entry_set,sc1 |> next_level, behavior_set) =
+		%Behavior of current level is determined, add it to result.
+		%Dependending on how many parallel entry actions we have discovered on this level we either
+		%add the empty list, just the sequential entry action of one state or a ParBehaviors
+		if(#behavior_set == 0,[],if(#behavior_set == 1, head(behavior_set), [ParBehaviors(behavior_set)]))
+		%Recurse to next level
+		++ determineOrderEntryBehavior(
+			sm,
+			sc1 |> next_level,
+			entry_set,
+			[],
+			[]);
+	%If the current level is finished and there is no next level to evaluate we simply return the behavior of behavior_set
+	determineOrderEntryBehavior(sm,[],entry_set,[],behavior_set) =
+		%Dependending on how many parallel entry actions we have discovered on this level we either
+		%add the empty list, just the sequential entry action of one state or a ParBehaviors
+		if(#behavior_set == 0,[],if(#behavior_set == 1, head(behavior_set), [ParBehaviors(behavior_set)]));
+
+	%determineOrderExitBehavior actually computes in what order what entry actions must be performed.
+	getExitActions(sm,cur,tr) =
+		determineOrderExitBehavior(
+			sm,
+			[cur],
+			getExitedStates(cur,computeNextState(cur,tr),tr),
+			[],
+			[]);
+	%Exit behavior is performed inside out, first the exit behavior of the bottom level states are performed.
+	%If there are still states to be evaluated at the current level of the hierarchy we apply this rule.
+	determineOrderExitBehavior(sm,sc1 |> cur_level,exit_set,next_level,behavior_set) =
+		determineOrderExitBehavior(
+			sm,
+			cur_level,
+			exit_set,
+			next_level ++ substates(sc1), %Add substates to next_level which will be dealt with later
+			%If the state under configuration is actually entered we add its exit action behavior to behavior_set.
+			%behavior_set contains all the parallel exit actions of the current level.
+			behavior_set ++ if(rootState(sc1) in exit_set,[InstructionsToComposedBehavior(getExitActionState(sm,rootState(sc1)))],[]));
+	%If the current level is finished and there is still a next level to evaluate we apply this rule.
+	determineOrderExitBehavior(sm,[],exit_set,sc1 |> next_level, behavior_set) =
+		%Recurse to next level
+		determineOrderExitBehavior(sm,sc1 |> next_level,exit_set,[],[])
+		%Behavior of current level is determined, add it to result.
+		%Dependending on how many parallel exit actions we have discovered on this level we either
+		%add the empty list, just the sequential entry action of one state or a ParBehaviors
+		++ if(#behavior_set == 0,[],if(#behavior_set == 1, head(behavior_set), [ParBehaviors(behavior_set)]));
+	%If the current level is finished and there is no next level to evaluate we simply return the behavior of behavior_set
+	determineOrderExitBehavior(sm,[],exit_set,[],behavior_set) =
+		%Dependending on how many parallel exit actions we have discovered on this level we either
+		%add the empty list, just the sequential entry action of one state or a ParBehaviors
+		if(#behavior_set == 0,[],if(#behavior_set == 1, head(behavior_set), [ParBehaviors(behavior_set)]));
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Behaviour execution
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+sort
+	%Composed behavior:
+	% It may happen that a Step consists several behaviors that must be executed in parallel (exit behavior of parllel regions for example)
+	ComposedBehavior = List(InstructionOrPar);
+	InstructionOrPar = struct Instruction(getInstruction:Instruction) ?is_instruction
+		| ParBehaviors(parBehaviors:List(ComposedBehavior)) ?is_par;
+
+	ExecutionOption = struct ExecutionOption(getCodeToExecute:Instructions, getRemainingBehavior:ComposedBehavior);
+map
+	computeExecutionOptions: ComposedBehavior -> List(ExecutionOption);
+	computeExecutionOptionsPar: ComposedBehavior#List(ComposedBehavior)#List(ComposedBehavior)#List(ExecutionOption) -> List(ExecutionOption);
+	computeExecutionOptionsSeq: ComposedBehavior#Instructions -> List(ExecutionOption);
+	removeEmptyPar: ComposedBehavior -> ComposedBehavior;
+	removeEmptyParList: List(ComposedBehavior) -> List(ComposedBehavior);
+var
+	c,c2,p:ComposedBehavior;
+	par1,par2: List(ComposedBehavior);
+	i:InstructionOrPar;
+	instr:Instructions;
+	e: ExecutionOption;
+	l1, l2, l3: List(ExecutionOption);
+eqn
+	%Given a ComposedBehavior we want to compute all execution options (sequences of ASAL executions).
+	computeExecutionOptions([]) = [];
+	is_instruction(i) -> computeExecutionOptions(i |> c) = computeExecutionOptionsSeq(c, [getInstruction(i)]);
+	is_par(i) -> computeExecutionOptions(i |> c) = computeExecutionOptionsPar(c, parBehaviors(i), [], []);
+
+	%For ParBehaviors we let one of the parallel branches execute a sequence of instructions
+	computeExecutionOptionsPar(c, par1, par2, e |> l1) =
+		computeExecutionOptionsPar(c, par1, par2, l1)
+		<| ExecutionOption(
+			getCodeToExecute(e),
+			removeEmptyPar(ParBehaviors(par1 ++ par2 <| getRemainingBehavior(e)) |> c)
+		);
+	computeExecutionOptionsPar(c, [], par2, []) = [];
+	computeExecutionOptionsPar(c, p |> par1, par2, []) =
+		computeExecutionOptionsPar(c, par1, p |> par2, [])
+		++ computeExecutionOptionsPar(c, [], par1 ++ par2, computeExecutionOptions(p));
+
+	%In the case of sequential instructions we can execute until we hit a ParBehaviors
+	%or until there is no behavior left.
+	computeExecutionOptionsSeq([], instr) = [ExecutionOption(instr,[])];
+	is_instruction(i) -> computeExecutionOptionsSeq(i |> c, instr) =
+		computeExecutionOptionsSeq(c, instr ++ [getInstruction(i)]);
+	is_par(i) -> computeExecutionOptionsSeq(i |> c, instr) = [ExecutionOption(instr,i |> c)];
+
+	%After executing code we might end with terms such as ParBehaviors([[]]). We want to remove these
+	%as they don't offer any execution options. computeExecutionOptions assumes there is something to
+	%execute in a ParBehaviors term.
+	removeEmptyPar([]) = [];
+	is_instruction(i) -> removeEmptyPar(i |> c) = i |> removeEmptyPar(c);
+	is_par(i) -> removeEmptyPar(i |> c) =
+		if(#removeEmptyParList(parBehaviors(i)) == 0,
+			removeEmptyPar(c),
+			ParBehaviors(removeEmptyParList(parBehaviors(i))) |> removeEmptyPar(c));
+	removeEmptyParList([]) = [];
+	removeEmptyParList(c |> par1) = if(#c == 0, removeEmptyParList(par1), c |> removeEmptyParList(par1));
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Change event derivation
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+sort
+	Monitor = struct Monitor(getMonitorExpression:Instructions,getMonitorValuation:Bool);
+map
+	updateMonitors: List(Monitor)#(VarName -> Value)#CompName -> List(Monitor);
+	deriveChangeEvents: List(Monitor)#(VarName -> Value)#CompName -> List(Event);
+	deriveChangeEventsMultUpdates: List(Monitor)#(VarName -> Value)#List(VarValuePair)#CompName -> List(Event);
+	deriveMonitorsSM: StateMachine -> List(Monitor);
+	deriveMonitors: List(Transition)#List(Monitor) -> List(Monitor);
+var
+	u: VarValuePair;
+	updates: List(VarValuePair);
+	monitors, updated: List(Monitor);
+	mon: Monitor;
+	derived_events: List(Event);
+	vars: VarName -> Value;
+	sm: StateMachine;
+	tr: Transition;
+	trs: List(Transition);
+	comp: CompName;
+eqn
+	updateMonitors(mon |> monitors,vars,comp) = Monitor(getMonitorExpression(mon),
+		checkPredicate(comp,getMonitorExpression(mon),vars)) |> updateMonitors(monitors,vars,comp);
+	updateMonitors([],vars,comp) = [];
+	deriveChangeEvents(mon |> monitors,vars,comp) =
+		if(checkPredicate(comp,getMonitorExpression(mon),vars) && !getMonitorValuation(mon),
+			[ChangeEvent(getMonitorExpression(mon))],
+			[]
+		) ++ deriveChangeEvents(monitors,vars,comp);
+	deriveChangeEvents([],vars,comp) = [];
+	deriveChangeEventsMultUpdates(monitors, vars, [], comp) = [];
+	deriveChangeEventsMultUpdates(monitors, vars, u |> updates, comp) =
+		deriveChangeEvents(monitors,vars[getVariable(u) -> getValue(u)],comp)
+		++ deriveChangeEventsMultUpdates(
+			updateMonitors(monitors,vars[getVariable(u) -> getValue(u)],comp),
+			vars[getVariable(u) -> getValue(u)],
+			updates, comp
+		);
+	deriveMonitorsSM(sm) = deriveMonitors(transitions(sm),[]);
+	deriveMonitors([], monitors) = monitors;
+	deriveMonitors(tr |> trs, monitors) = if(is_change_event(trigger(tr)) && !(Monitor(get_expression(trigger(tr)),false) in monitors),
+		deriveMonitors(trs, monitors <| Monitor(get_expression(trigger(tr)),false)),
+		deriveMonitors(trs,monitors));
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%SysML specifc data structures
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+sort
+	Component = struct Component(
+		SM: StateMachine,
+		inPorts: List(VarName),
+		outPorts: List(VarName),
+		pulsePorts: List(VarName),
+		synchronousPorts: List(VarName),
+		functions: List(FunctionName)
+	);
+	CompPortPair = struct CompPortPair(getComp: CompName, getPort: VarName);
+	Channel = struct Channel(sender: CompPortPair, receivers: List(CompPortPair));
+	VarValuePair = struct VarValuePair(getVariable:VarName, getValue:Value);
+map
+	filterPortUpdates: List(VarValuePair)#Component -> List(VarValuePair);
+var
+	vv: VarValuePair;
+	updates: List(VarValuePair);
+	c: Component;
+eqn
+	%Filter out updates to state machine variables to get updates of ports
+	filterPortUpdates([],c) = [];
+	filterPortUpdates(vv |> updates, c) =
+		if(getVariable(vv) in outPorts(c),
+			[vv],
+			[])
+		++ filterPortUpdates(updates, c);
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%State machine process definitions
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+act
+	sendComp,receiveI,send: CompPortPair#Value;
+	sendI,receiveComp,receive: CompPortPair#Value;
+	discardEvent: Event;
+	selectMultiStep: Event#List(Step);
+	executeBehaviour;
+	executeStep: Step;
+	inState: CompName#StateName;
+
+proc
+	StateMachineInit(id:CompName, comp:Component) = StateMachine(
+		id,
+		comp,
+		Steps(SM(comp)),
+		initialState(SM(comp)),
+		[],
+		updateMonitors(deriveMonitorsSM(SM(comp)),initialValuation(SM(comp)),id),
+		initialValuation(SM(comp)),
+		[],
+		[],
+		EmptyExcFrame,
+		[]
+	);
+
+	%Main process definition of components, it simulates a UML/SysML state machine
+	StateMachine(
+			id:CompName,
+			comp:Component,
+			steps: List(Step),
+			sc:StateConfig, %SM is 'in' a hierarchy of states, possibly containg parallel regions
+			eq: List(Event), %Events, stemming from for example 'when' statements are stored here until dispatch
+			mon:List(Monitor), %For each expression inside a 'when' statement a monitor is needed to check when the valuation goes from false to true
+			vars: VarName -> Value, %Current value of variables, which are both proper variables as well as ports
+			ms: List(Step), %In the case of parallel regions a multi-step of multiple transitions may be selected, which are stored in this variable
+			behav: ComposedBehavior, %Stores behaviour to be executed for ongoing transition, may contain parallel behaviours
+			exc: ExcFrame, %Function frame of instructions that are being executed, stores a paused execution
+			mq: List(VarValuePair) %When during the execution of a function frame multiple ports are updates, the updates are temporarily stored here
+			) =
+		sum s:StateName. (s in getAllStatesConfig(sc)) -> inState(id,s).StateMachine()
+		%Receive messages on ports from other components, message queue is bound to prohibit infinite state space
+		+ (#eq < EVENT_QUEUE_BOUND && USE_SYCHRONOUS_PORTS && #ms == 0 && #behav == 0
+			&& exc == EmptyExcFrame && !containsPseudoState(sc,SM(comp)) && #mq == 0)
+			-> sum v:Value,p:VarName. (p in synchronousPorts(comp)) -> (
+						(#filterEnabledEventList(deriveChangeEvents(mon, vars[p->v],id), steps, sc, SM(comp), vars, id) == 0) ->
+					%No transition enabled, immediate discard
+					receiveComp(CompPortPair(id,p),v).StateMachine(
+						vars = if(p in pulsePorts(comp), vars, vars[p -> v]),
+						mon = if(p in pulsePorts(comp), mon, updateMonitors(mon,vars[p -> v],id)))
+					%Some transition is enabled, immediately pick one
+					<> (sum multi:List(Step).
+					 (multi in multistepPossibilities(filterPriority(
+							filterEnabledEventList(deriveChangeEvents(mon, vars[p->v],id), steps, sc, SM(comp), vars, id))))
+						-> receiveComp(CompPortPair(id,p),v).StateMachine(
+							sc = if(#multi == 1, computeNextState(sc,head(multi)), sc),
+							%eq = if(#eq > 0 && ev == head(eq),tail(eq),eq),
+							ms = if(#multi == 1, [], multi),
+							behav = if(#multi == 1, determineBehaviourStep(SM(comp),head(multi),sc), [])))
+			)
+		+ (#eq < EVENT_QUEUE_BOUND) -> sum v:Value,p:VarName.
+			(USE_SYCHRONOUS_PORTS => !(p in synchronousPorts(comp))) -> receiveComp(CompPortPair(id,p),v)
+			.StateMachine(
+				vars = if(p in pulsePorts(comp), vars, vars[p -> v]),
+				eq = eq ++ if(#eq == 0 && (INSTANT_DISCARD_NO_ESCAPE || INSTANT_DISCARD_ALWAYS)
+					&& (INSTANT_DISCARD_NO_ESCAPE =>
+						(#filterEnabled(filterPossible(steps,sc,SM(comp)),none,vars,id) == 0
+						&& #filterEnabled(filterPossible(steps,sc,SM(comp)),TimeoutEvent,vars,id) == 0))
+					&& ((INSTANT_DISCARD_NO_ESCAPE || INSTANT_DISCARD_ALWAYS) =>
+						(#filterEnabledEventList(deriveChangeEvents(mon, vars[p->v],id), steps, sc, SM(comp), vars, id) == 0)),
+					[],
+					deriveChangeEvents(mon, vars[p->v],id) %Derive events from changed variable
+				),
+				mon = if(p in pulsePorts(comp), mon, updateMonitors(mon,vars[p -> v],id)))
+		%if no Step is enabled by an event then it can be discarded
+		+ (#ms == 0 && #behav == 0 && exc == EmptyExcFrame && #eq != 0 && !containsPseudoState(sc,SM(comp)) && #mq == 0
+			&& #filterEnabled(filterPossible(steps,sc,SM(comp)),head(eq),vars,id) == 0)
+				-> discardEvent(head(eq)).StateMachine(eq = tail(eq))
+		%select multi-step to start executing
+		+ (#ms == 0 && #behav == 0 && #mq == 0 && exc == EmptyExcFrame) ->
+			(
+				StateMachineSelectStep(id,comp,steps,sc,eq,mon,vars,none) %Event none, some transitions do not need a specific event
+				+ StateMachineSelectStep(id,comp,steps,sc,eq,mon,vars,TimeoutEvent) %TimeoutEvent
+				+ (#eq > 0) -> StateMachineSelectStep(id,comp,steps,sc,eq,mon,vars,head(eq)) %Event from event queue
+			)
+		%From set of selected transitions pick one to start executing
+		+ (#behav == 0 && #mq == 0 && exc == EmptyExcFrame) -> sum n:Nat. (n < #ms)
+			-> executeStep(ms.n).StateMachine(
+				ms = removeSteps(ms,[ms.n]),
+				behav = determineBehaviourStep(SM(comp),ms.n,sc),
+				sc = computeNextState(sc,ms.n)
+			)
+		%From behavior that needs to be executed pick an execution option and start executing.
+		%Note that for sequential behavior there is only one execution option but a transition may have some parallel behavior
+		+ (#behav != 0 && exc == EmptyExcFrame && #mq == 0)
+			-> sum eo:ExecutionOption.
+			(eo in computeExecutionOptions(behav) && #getCodeToExecute(eo) > 0) ->
+				StateMachineExecuteCode(
+					exc = initializeExcFrame(id, getCodeToExecute(eo),vars),
+					behav = getRemainingBehavior(eo))
+		+ (exc != EmptyExcFrame && #mq == 0) -> StateMachineExecuteCode()
+		%If there are messages waiting to be sent to other components, do that
+		+ (#mq > 0) -> sendComp(CompPortPair(id, getVariable(head(mq))),getValue(head(mq)))
+			.StateMachine(mq = tail(mq));
+
+	%Executes code in ongoing_execution
+	StateMachineExecuteCode(id:CompName, comp:Component, steps:List(Step), sc:StateConfig, eq: List(Event), mon:List(Monitor),
+			vars: VarName -> Value, ms: List(Step), behav: ComposedBehavior, exc: ExcFrame, mq: List(VarValuePair)) =
+		%if at least one port update send a message to other state machine
+		((#filterPortUpdates(varUpdates(executeExcFrameCode(exc)),comp) > 0 && COMBINE_EB_S) ->
+			sendComp(CompPortPair(id, getVariable(head(filterPortUpdates(varUpdates(executeExcFrameCode(exc)),comp)))),
+				getValue(head(filterPortUpdates(varUpdates(executeExcFrameCode(exc)),comp))))
+			<> executeBehaviour %if no message is sent on a port simply perform a dummy action
+		).StateMachine(
+			%Update mapping of global variables
+			vars = globalValuation(executeExcFrameCode(exc)),
+			%If the function frame has not finished execution we store the function frame in the variable ongoing_execution
+			exc = if(instructionsPos(executeExcFrameCode(exc)) < #instructions(executeExcFrameCode(exc)),
+				executeExcFrameCode(exc),
+				EmptyExcFrame),
+			%Derive change events from updated variables
+			eq = eq ++ deriveChangeEventsMultUpdates(mon,vars,varUpdates(executeExcFrameCode(exc)),id),
+			%Update monitors
+			mon = updateMonitors(mon,globalValuation(executeExcFrameCode(exc)),id),
+			%If there was more than one message to send via a port store the remainder in message_output_queue
+			mq = if(#filterPortUpdates(varUpdates(executeExcFrameCode(exc)),comp) >= 1 && COMBINE_EB_S,
+				tail(filterPortUpdates(varUpdates(executeExcFrameCode(exc)),comp)),
+				filterPortUpdates(varUpdates(executeExcFrameCode(exc)),comp)));
+
+	%Selects transition based on event 'ev'
+	StateMachineSelectStep(id:CompName, comp:Component, steps:List(Step), sc:StateConfig, eq: List(Event),
+			mon:List(Monitor), vars: VarName -> Value, ev:Event) =
+		sum multi:List(Step). %step may consist of multiple transitions
+			(
+				multi in multistepPossibilities(
+					filterPriority(
+						filterEnabled(
+							filterPossible(steps, sc, SM(comp)),
+							ev,vars,id)))
+			)
+			%If the step contains only 1 step we immediately start executing it by computing the next state and the behavior that needs to be executed
+			-> ((COMBINE_SMS_ES_EB && #multi == 1 && #determineBehaviourStep(SM(comp),head(multi),sc) > 0
+					&& is_instruction(head(determineBehaviourStep(SM(comp),head(multi),sc)))) ->
+				StateMachineExecuteCode(
+					id, comp, steps,
+					computeNextState(sc,head(multi)),
+					if(#eq > 0 && ev == head(eq),tail(eq),eq), %if head of event queue was used as trigger remove it from the queue
+					mon, vars, [],
+					getRemainingBehavior(head(computeExecutionOptions(determineBehaviourStep(SM(comp),head(multi),sc)))),
+					initializeExcFrame(id, getCodeToExecute(head(computeExecutionOptions(determineBehaviourStep(SM(comp),head(multi),sc)))),vars),
+					[]
+				)
+				<> selectMultiStep(ev,multi).StateMachine(
+					id, comp, steps,
+					if(#multi == 1 && COMBINE_SMS_ES, computeNextState(sc,head(multi)), sc),
+					if(#eq > 0 && ev == head(eq),tail(eq),eq), %if head of event queue was used as trigger remove it from the queue
+					mon, vars,
+					if(#multi == 1 && COMBINE_SMS_ES, [], multi),
+					if(#multi == 1 && COMBINE_SMS_ES, determineBehaviourStep(SM(comp),head(multi),sc), []),
+					EmptyExcFrame, []
+				)
+			);
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Optimization options
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+map
+	SELECTIVE_MEMORY_VARIABLES: Bool;
+	INSTANT_DISCARD_ALWAYS: Bool;
+	INSTANT_DISCARD_NO_ESCAPE: Bool;
+	USE_SYCHRONOUS_PORTS: Bool;
+	COMBINE_SMS_ES: Bool; %Combine selectMultiStep and executeStep
+	COMBINE_SMS_ES_EB: Bool; %Combine selectMultiStep, executeStep and executeBehaviour
+	COMBINE_EB_S: Bool; %Combine executeBehaviour and sendComp
+	EVENT_QUEUE_BOUND: Nat;
+	unreferencedVars: CompName -> FSet(VarName);
+	getAllInstructionsTransitions: List(Transition) -> Instructions;
+	getAllInstructionsEntryExit: List(StateName)#CompName -> Instructions;
+	getAllInstructionsFunctions: List(FunctionName) -> Instructions;
+	filterUnreferencedVars: Instructions#FSet(VarName)#FSet(VarName) -> FSet(VarName);
+var
+	c: CompName;
+	i: Instruction; i_list: List(Instruction);
+	v: VarName;
+	tr: Transition; trs: List(Transition);
+	s: StateName; s_list: List(StateName);
+	f: FunctionName; f_list: List(FunctionName);
+	written, read: FSet(VarName);
+eqn
+	unreferencedVars(c) = filterUnreferencedVars(
+		getAllInstructionsTransitions(transitions(SMDefs(c)))
+		++ getAllInstructionsEntryExit(states(SMDefs(c)),c)
+		++ getAllInstructionsFunctions(functions(compDefs(c))),{},{});
+	filterUnreferencedVars(ASALA_SetGlobalVar(v) |> i_list, written, read) = filterUnreferencedVars(i_list, written + {v}, read);
+	filterUnreferencedVars(ASALA_PushGlobalVar(v) |> i_list, written, read) = filterUnreferencedVars(i_list, written, read + {v});
+	(!is_global_var_update(i) && !is_global_var_read(i)) -> filterUnreferencedVars(i |> i_list, written, read) = filterUnreferencedVars(i_list, written, read);
+	filterUnreferencedVars([],written,read) = written - read;
+	getAllInstructionsTransitions(tr |> trs) = guard(tr) ++ effect(tr)
+		++ if(is_change_event(trigger(tr)), get_expression(trigger(tr)), [])
+		++ getAllInstructionsTransitions(trs);
+	getAllInstructionsTransitions([]) = [];
+	getAllInstructionsEntryExit(s |> s_list, c) = getEntryActionState(SMDefs(c),s) ++ getExitActionState(SMDefs(c),s)
+		++ getAllInstructionsEntryExit(s_list, c);
+	getAllInstructionsEntryExit([], c) = [];
+	getAllInstructionsFunctions(f |> f_list) = getFunctionBodies(f) ++ getAllInstructionsFunctions(f_list);
+	getAllInstructionsFunctions([]) = [];
+
+%Elements needed to make spec parsable on its own
+% sort
+%  	String  = struct string_dummy;
+%  	VarName = struct finished1;
+%  	FunctionName = struct getResult;
+%  	StateName = struct initial0 | root;
+% 	CompName = struct main | worker1 | worker2;
+% map
+% 	getFunctionParams: FunctionName -> List(VarName);
+% 	getFunctionBodies: FunctionName -> Instructions;
+% 	compDefs: CompName -> Component;
+% 	SMDefs: CompName -> StateMachine;
+%  init
+%   delta;
